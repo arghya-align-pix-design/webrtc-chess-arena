@@ -10,7 +10,8 @@ import { mediaCodecs } from './mediasoup/config';
 
 const app=express();
 app.use(cors({
-  origin: "http://localhost:3000",  
+  origin: "*",
+  methods: ["GET", "POST"],
   credentials: true
 }));
 app.use(express.json());
@@ -56,11 +57,11 @@ app.post('/create',async (req,res)=>{
         console.log('[server] room created successfully ', id)
         res.status(200).json({roomId : room.id});
     }catch(e){
-        res.status(401).json({error : 'Error while creating room.'});
+        res.status(401).json({error : 'Error while creating room on BE.'});
     }
 })
 
-const server=app.listen(8080,()=>{
+const server=app.listen(8080,"0.0.0.0",()=>{
     console.log('Server is listening on port 8080');
 })
 
@@ -68,7 +69,7 @@ const server=app.listen(8080,()=>{
 
 const io=new Server(server,{
     cors : {
-        origin : 'http://localhost:3000'
+        origin : "*" //'http://localhost:3000'
     }
 })
 

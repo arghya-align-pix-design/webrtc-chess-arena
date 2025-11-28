@@ -18,11 +18,11 @@ export default function CreateGame(){
         }
         setName(nameRef.current.value);
 
-        await axios.post('http://localhost:8080/create',{
+        await axios.post('http://192.168.29.111:8080/create',{
             roomName : roomRef.current.value,
         }).then((res)=>{
             const roomId=res.data.roomId;
-            const roomName=roomRef.current?.value;
+            const roomName=roomRef.current?.value; 
             router.push(`/room/${roomName}/${roomId}`)
         }).catch((e)=>{
             alert('Error while Creating room.')

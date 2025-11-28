@@ -15,10 +15,10 @@ export default function JoinGame(){
         if(!roomIdRef.current?.value || !nameRef.current?.value){
             alert('Fill all the filds.');
             return;
-        }   
+        }
         setName(nameRef.current.value);
 
-        await axios.post('http://localhost:8080/join',{
+        await axios.post('http://http://192.168.29.111:8000/join',{
             roomId : roomIdRef.current.value, 
         }).then((res)=>{
             const roomName=res.data.roomName;
