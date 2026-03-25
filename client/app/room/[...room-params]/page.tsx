@@ -1,11 +1,34 @@
 'use client'
-import { useEffect, useRef, useState } from "react"
+import { useEffect, memo, useRef, useState } from "react"
 import { io, Socket } from "socket.io-client"
 import { useInfoHook } from "@/store/info"
 import { useRouter } from "next/navigation"
 import { Device } from "mediasoup-client"
-import { AppData, Producer, RtpCapabilities, RtpParameters, Transport } from "mediasoup-client/types"
-const BACK_END='http://localhost:8080'
+import ChessManager from "../../compos/ChessManager"
+import { Chess } from "chess.js";
+import { types as mediasoupTypes } from "mediasoup-client"
+import React from "react"
+
+type AppData = mediasoupTypes.AppData;
+type Producer = mediasoupTypes.Producer;
+type RtpCapabilities = mediasoupTypes.RtpCapabilities;
+type RtpParameters = mediasoupTypes.RtpParameters;
+type Transport = mediasoupTypes.Transport;
+const BACK_END='http://localhost:8080';
+
+// ✅ Memoized Video Component
+    // const VideoSection = memo(({ videoRef, muted = false }: any) => {
+    //     return (
+    //         <video
+    //             ref={videoRef}
+    //             autoPlay
+    //             playsInline
+    //             muted={muted}
+    //             className="w-full border rounded-md"
+    //             style={{ aspectRatio: 16 / 11 }}
+    //         />
+    //     );
+    // },[]);
 
 export default function Room(){
     const socketRef=useRef<Socket | null>(null);
@@ -13,6 +36,7 @@ export default function Room(){
     const roomIdRef=useRef<string>(null);
     const [roomName,setRoomName]=useState<string>('');
     const router=useRouter();
+
     const deviceRef=useRef<Device>(null);
     const sendTransportRef=useRef<Transport>(null);
     const recvTransportRef=useRef<Transport>(null);
@@ -24,6 +48,11 @@ export default function Room(){
     const localStreamRef=useRef<MediaStream>(null);
     const micProducersRef=useRef<Producer>(null);
     const camProducersRef=useRef<Producer>(null);
+    //Player data
+    const [game, setGame] = useState(new Chess());
+    const [playerColor, setPlayerColor] = useState<"white" | "black" | null>(null);
+
+    
 
     useEffect(()=>{
         const url=window.location.pathname;
@@ -34,18 +63,34 @@ export default function Room(){
         if(roomId){
             roomIdRef.current=roomId;
             console.log(roomIdRef.current);
-        } 
+        }
+        
+        
+        
     },[]);
 
     useEffect(()=>{
         if(roomName=='') return;
         socketRef.current=io(BACK_END, { autoConnect: true });
         console.log(roomIdRef.current);
+
+        // Chess: listen for color assignment
+        // Registered here so it fires as soon as we join, before any mediasoup traffic
+        socketRef.current.on('colorAssigned', (color: 'white' | 'black') => {
+            console.log('[colorAssigned]', color);
+            setPlayerColor(color);
+        });
+
         joinRoom();
         const newProducerHandler = async ({ producerId, peerId, kind, appData } : {producerId : string, peerId : string, kind : 'video' | 'audio', appData : AppData}) => {
             await createConsumer(producerId,appData);
         };
         socketRef.current.on('new-producer',newProducerHandler);
+
+        return () => {
+            socketRef.current?.off('colorAssigned');
+            socketRef.current?.off('new-producer', newProducerHandler);
+        };
     },[roomName])
 
     async function createTransport(){
@@ -259,12 +304,24 @@ export default function Room(){
     }
     
     return <div className="flex p-10 w-screen h-screen items-center justify-between">
+        {/* LEFT VIDEO-OPPONENT'S VIDEO */}
         <div className="w-1/5 h-full flex flex-col justify-start">
             <video ref={localVideoRef} autoPlay playsInline muted={true} className="w-full border rounded-md" style={{aspectRatio : 16/11}}/>
         </div>
         <div className="w-3/5 h-full flex flex-col items-center justify-center">
-            <div className="h-full border rounded-md" style={{aspectRatio : 1}}></div>
+            <div className="h-full border rounded-md flex items-center justify-center" style={{aspectRatio : 1}}>
+                {playerColor && socketRef.current &&  (
+                    <ChessManager
+                        // game={game}
+                        // setGame={setGame}
+                        playerColor={playerColor}
+                        socket={socketRef.current}
+                        roomId={roomIdRef.current}
+                    />
+                )}
+            </div>
         </div>
+        {/* RIGHT VIDEO- USER'S VIDEO */}
         <div className="w-1/5 h-full flex flex-col justify-end">
             <video ref={remoteVideoRef} autoPlay playsInline className="w-full border rounded-md" style={{aspectRatio : 16/11}}/>
         </div>

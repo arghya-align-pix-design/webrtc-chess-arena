@@ -18,7 +18,8 @@ export default function JoinGame(){
         }
         setName(nameRef.current.value);
 
-        await axios.post('http://http://192.168.29.111:8000/join',{
+        await axios.post('http://localhost:8080/join',    //"https://webrtc-chess-arena.onrender.com/join" ,
+            {   //{
             roomId : roomIdRef.current.value, 
         }).then((res)=>{
             const roomName=res.data.roomName;

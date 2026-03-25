@@ -10,7 +10,7 @@ import { mediaCodecs } from './mediasoup/config';
 
 const app=express();
 app.use(cors({
-  origin: "*",
+  origin: 'http://localhost:3000',
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -18,6 +18,18 @@ app.use(express.json());
 
 let worker : Worker;
 const rooms : Map<string,Room>=new Map();
+
+// Custom types
+interface Player {
+  id: string;
+  color: "white" | "black";
+}
+
+interface Rooms {
+  players: Player[];
+}
+
+const chessRooms: Record<string, Rooms> = {};
 
 async function creatingWorker(){
     worker=await CreateWorker();
@@ -35,6 +47,7 @@ app.get('/ping',(req,res)=>{
 app.post('/join',(req,res)=>{
     const {roomId}=req.body;
     const room=rooms.get(roomId);
+    
     if(room){
         if(room.peers.length==2){
             res.status(403).json({error : 'Both peers already joined'});
@@ -61,7 +74,7 @@ app.post('/create',async (req,res)=>{
     }
 })
 
-const server=app.listen(8080,"0.0.0.0",()=>{
+const server=app.listen(8080,()=>{
     console.log('Server is listening on port 8080');
 })
 
@@ -69,7 +82,7 @@ const server=app.listen(8080,"0.0.0.0",()=>{
 
 const io=new Server(server,{
     cors : {
-        origin : "*" //'http://localhost:3000'
+        origin :"*"        //'http://localhost:3000',  // ""
     }
 })
 
@@ -79,6 +92,11 @@ io.on('connection',(socket)=>{
     socket.on('join-room',({name, roomId },callback)=>{
         const peer=new Peer(name,socket.id);
         const room=rooms.get(roomId);
+        
+        if (!chessRooms[roomId]) {
+            chessRooms[roomId] = { players: [] };
+        }
+        
         console.log('[join-room] 1',roomId);
         if(room){
             socket.join(roomId);
@@ -90,6 +108,21 @@ io.on('connection',(socket)=>{
                 }
                 const producers=room.getProducers();
                 console.log('[join-room-producers] ,producers');
+                // Assign chess color: first peer = random, second = opposite
+                
+                const isFirstPlayer = chessRooms[roomId].players.length === 0;
+                const assignedColor: "white" | "black" = isFirstPlayer
+                ? (Math.random() < 0.5 ? "white" : "black")
+                : (chessRooms[roomId].players[0].color === "white" ? "black" : "white");
+
+                chessRooms[roomId].players.push({ id: socket.id, color: assignedColor });
+                
+                socket.emit('colorAssigned', assignedColor);
+                console.log(`[join-room] color assigned: ${assignedColor} to ${socket.id}`);
+                // Notify first peer that opponent has joined
+                if(room.peers.length === 2){
+                    socket.to(roomId).emit('opponentJoined');
+                }
                 callback({routerRtpCapabilities : room.router.rtpCapabilities, producers : producers});
             }
             else{
@@ -99,6 +132,12 @@ io.on('connection',(socket)=>{
         else{
             callback({error : 'not found'});
         }
+    })
+
+    // Chess: relay a move to the opponent in the same room
+    socket.on('moveMade', ({ roomId, from, to, fen }: { roomId: string; from: string; to: string; fen: string }) => {
+        console.log(`[moveMade] ${socket.id} moved ${from}->${to} in room ${roomId}`);
+        socket.to(roomId).emit('moveMade', { from, to, fen });
     })
 
     socket.on('create-transport', async ({roomId,direction},callback)=>{
@@ -232,6 +271,6 @@ io.on('connection',(socket)=>{
         if(consumer){
             await consumer.resume();
             console.log('[resume-consumer] consumer resumed') 
-        }      
+        } 
     })
 })

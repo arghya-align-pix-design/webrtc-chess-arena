@@ -17,6 +17,7 @@
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "mediasoup": "^3.19.12",
+    "nodemon": "^3.1.14",
     "socket.io": "^4.8.1",
     "typescript": "^5.9.3"
   }
