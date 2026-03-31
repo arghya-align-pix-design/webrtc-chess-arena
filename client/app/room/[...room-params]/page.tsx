@@ -9,12 +9,14 @@ import { Chess } from "chess.js";
 import { types as mediasoupTypes } from "mediasoup-client"
 import React from "react"
 
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
 type AppData = mediasoupTypes.AppData;
 type Producer = mediasoupTypes.Producer;
 type RtpCapabilities = mediasoupTypes.RtpCapabilities;
 type RtpParameters = mediasoupTypes.RtpParameters;
 type Transport = mediasoupTypes.Transport;
-const BACK_END='http://localhost:8080';
+// const BACK_END='http://localhost:8080';
 
 // ✅ Memoized Video Component
     // const VideoSection = memo(({ videoRef, muted = false }: any) => {
@@ -71,7 +73,7 @@ export default function Room(){
 
     useEffect(()=>{
         if(roomName=='') return;
-        socketRef.current=io(BACK_END, { autoConnect: true });
+        socketRef.current=io(`${BASE_URL}`, { autoConnect: true });
         console.log(roomIdRef.current);
 
         // Chess: listen for color assignment

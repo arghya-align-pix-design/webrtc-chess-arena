@@ -4,6 +4,8 @@ import { useRef } from "react";
 import axios from "axios";
 import { useInfoHook } from "@/store/info";
 
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
 export default function CreateGame(){
     
     const router=useRouter();
@@ -18,7 +20,7 @@ export default function CreateGame(){
         }
         setName(nameRef.current.value);
 
-        await axios.post( 'http://localhost:8080/create',
+        await axios.post( `${BASE_URL}/create`,
             //"https://webrtc-chess-arena.onrender.com/create",
             { 
             roomName : roomRef.current.value,

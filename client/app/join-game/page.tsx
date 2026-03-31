@@ -4,6 +4,8 @@ import { useRef } from "react";
 import axios from 'axios';
 import { useInfoHook } from "@/store/info";
 
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+
 export default function JoinGame(){
     
     const router=useRouter();
@@ -12,15 +14,15 @@ export default function JoinGame(){
     const {name,setName}=useInfoHook();
 
     async function join(){
-        if(!roomIdRef.current?.value || !nameRef.current?.value){
+        if( !roomIdRef.current?.value || !nameRef.current?.value ){
             alert('Fill all the filds.');
             return;
         }
         setName(nameRef.current.value);
 
-        await axios.post('http://localhost:8080/join',    //"https://webrtc-chess-arena.onrender.com/join" ,
+        await axios.post(`${BASE_URL}/join` ,  //"https://webrtc-chess-arena.onrender.com/join" ,
             {   //{
-            roomId : roomIdRef.current.value, 
+            roomId : roomIdRef.current.value,
         }).then((res)=>{
             const roomName=res.data.roomName;
             const roomId=roomIdRef.current?.value;
