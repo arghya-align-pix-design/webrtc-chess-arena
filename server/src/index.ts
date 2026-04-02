@@ -10,9 +10,9 @@ import { mediaCodecs } from './mediasoup/config';
 
 const app=express();
 app.use(cors({
-  origin: '*',
+  origin: 'http://localhost:3000',
   methods: ["GET", "POST"],
-  credentials: true
+  //credentials: true
 }));
 app.use(express.json());
 
@@ -27,6 +27,7 @@ interface Player {
 
 interface Rooms {
   players: Player[];
+  fen: string;
 }
 
 const chessRooms: Record<string, Rooms> = {};
@@ -94,7 +95,10 @@ io.on('connection',(socket)=>{
         const room=rooms.get(roomId);
         
         if (!chessRooms[roomId]) {
-            chessRooms[roomId] = { players: [] };
+            chessRooms[roomId] = { 
+                players: [],
+                fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            };
         }
         
         console.log('[join-room] 1',roomId);
@@ -123,6 +127,10 @@ io.on('connection',(socket)=>{
                 if(room.peers.length === 2){
                     socket.to(roomId).emit('opponentJoined');
                 }
+                
+                // Sync current game state with the newly joined client
+                socket.emit('gameStateSync', { fen: chessRooms[roomId].fen });
+
                 callback({routerRtpCapabilities : room.router.rtpCapabilities, producers : producers});
             }
             else{
@@ -137,6 +145,9 @@ io.on('connection',(socket)=>{
     // Chess: relay a move to the opponent in the same room
     socket.on('moveMade', ({ roomId, from, to, fen }: { roomId: string; from: string; to: string; fen: string }) => {
         console.log(`[moveMade] ${socket.id} moved ${from}->${to} in room ${roomId}`);
+        if (chessRooms[roomId]) {
+            chessRooms[roomId].fen = fen;
+        }
         socket.to(roomId).emit('moveMade', { from, to, fen });
     })
 
@@ -273,4 +284,46 @@ io.on('connection',(socket)=>{
             console.log('[resume-consumer] consumer resumed') 
         } 
     })
+
+    socket.on('disconnect', () => {
+        console.log('Client Disconnected : ', socket.id);
+        
+        for (const [roomId, room] of rooms.entries()) {
+            const peerIndex = room.peers.findIndex(p => p.socketId === socket.id);
+            if (peerIndex !== -1) {
+                // Found the peer, remove them
+                const peer = room.peers[peerIndex];
+                
+                // Close transports to free mediasoup resources
+                if (peer.upTransport) peer.upTransport.close();
+                if (peer.downTransport) peer.downTransport.close();
+                peer.consumers.forEach(consumer => consumer.close());
+                if (peer.camProducer) peer.camProducer.close();
+                if (peer.micProducer) peer.micProducer.close();
+
+                room.peers.splice(peerIndex, 1);
+                
+                // Cleanup chess room allocation
+                if (chessRooms[roomId]) {
+                    chessRooms[roomId].players = chessRooms[roomId].players.filter(p => p.id !== socket.id);
+                }
+
+                if (room.peers.length === 0) {
+                    // Both peers left -> fully clean up room
+                    if (room.router) {
+                        room.router.close();
+                    }
+                    rooms.delete(roomId);
+                    delete chessRooms[roomId];
+                    console.log(`[disconnect] Room ${roomId} completely cleaned up (empty).`);
+                    console.log ("trying to look for the room", chessRooms[roomId] );
+                    console.log("Remaining rooms:", rooms);
+                } else {
+                    console.log(`[disconnect] Player left room ${roomId}. Room kept awake.`);
+                    socket.to(roomId).emit('playerDisconnected', { socketId: socket.id, name: peer.name });
+                }
+                break; // Stop iterating rooms once found
+            }
+        }
+    });
 })
