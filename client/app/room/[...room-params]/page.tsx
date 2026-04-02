@@ -9,7 +9,7 @@ import { Chess } from "chess.js";
 import { types as mediasoupTypes } from "mediasoup-client"
 import React from "react"
 
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+const BASE_URL ="http://localhost:8080"; // process.env.NEXT_PUBLIC_BACKEND_URL || 
 
 type AppData = mediasoupTypes.AppData;
 type Producer = mediasoupTypes.Producer;
@@ -51,10 +51,10 @@ export default function Room(){
     const micProducersRef=useRef<Producer>(null);
     const camProducersRef=useRef<Producer>(null);
     //Player data
+    //Player data
     const [game, setGame] = useState(new Chess());
     const [playerColor, setPlayerColor] = useState<"white" | "black" | null>(null);
-
-    
+    const [initialFen, setInitialFen] = useState<string>("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 
     useEffect(()=>{
         const url=window.location.pathname;
@@ -66,9 +66,7 @@ export default function Room(){
             roomIdRef.current=roomId;
             console.log(roomIdRef.current);
         }
-        
-        
-        
+
     },[]);
 
     useEffect(()=>{
@@ -83,15 +81,27 @@ export default function Room(){
             setPlayerColor(color);
         });
 
+        socketRef.current.on('gameStateSync', (data: { fen: string }) => {
+            console.log('[gameStateSync]', data.fen);
+            setInitialFen(data.fen);
+        });
+
         joinRoom();
         const newProducerHandler = async ({ producerId, peerId, kind, appData } : {producerId : string, peerId : string, kind : 'video' | 'audio', appData : AppData}) => {
             await createConsumer(producerId,appData);
         };
         socketRef.current.on('new-producer',newProducerHandler);
 
+        const playerDisconnectedHandler = (data: { socketId: string, name: string }) => {
+            alert(`${data.name} has left the room`);
+        };
+        socketRef.current.on('playerDisconnected', playerDisconnectedHandler);
+
         return () => {
             socketRef.current?.off('colorAssigned');
+            socketRef.current?.off('gameStateSync');
             socketRef.current?.off('new-producer', newProducerHandler);
+            socketRef.current?.off('playerDisconnected', playerDisconnectedHandler);
         };
     },[roomName])
 
@@ -319,6 +329,7 @@ export default function Room(){
                         playerColor={playerColor}
                         socket={socketRef.current}
                         roomId={roomIdRef.current}
+                        initialFen={initialFen}
                     />
                 )}
             </div>
