@@ -16,15 +16,22 @@ type ChessManagerProps = {
     playerColor: "white" | "black";
     socket: Socket;
     roomId: string | null;
+    initialFen?: string;
 };
 
 const ChessManager = ({ 
     //game, setGame, 
-    playerColor, socket, roomId }: ChessManagerProps) => {
+    playerColor, socket, roomId, initialFen }: ChessManagerProps) => {
     const [warning, setWarning] = useState("");
     //const gameRef = useRef(new Chess()); // ✅ stable instance
-    const [game,setGame]=useState(new Chess());
+    const [game,setGame]=useState(new Chess(initialFen));
     //const [fen, setFen] = useState(gameRef.current.fen());
+
+    useEffect(() => {
+        if (initialFen) {
+            setGame(new Chess(initialFen));
+        }
+    }, [initialFen]);
 
     const handleOpponentMove = useCallback(({ from, to, fen }: MoveData) => {
         console.log(`Move received: ${from} -> ${to}`);
