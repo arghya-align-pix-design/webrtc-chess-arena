@@ -1,2 +1,5 @@
 node_modules
 dist
+chessKeyPair.pem
+chessKeyPair.pub
+chessKP.pem

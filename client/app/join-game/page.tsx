@@ -4,7 +4,7 @@ import { useRef } from "react";
 import axios from 'axios';
 import { useInfoHook } from "@/store/info";
 
-const BASE_URL = "http://localhost:8080"; //process.env.NEXT_PUBLIC_BACKEND_URL || 
+const BASE_URL = "http://localhost:8080"; //"https://65.1.130.45.sslip.io"; //process.env.NEXT_PUBLIC_BACKEND_URL || 
 
 export default function JoinGame(){
     

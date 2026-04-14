@@ -5,26 +5,27 @@ import { Chess,Square } from "chess.js";
 type ChessBoardProps = {
     position: string; // FEN string to represent the board state
     onMove: (move: { from: Square; to: Square }) => boolean; // Function handling piece movement
-    playerColor: "white" | "black"; // Player's color
+    playerColor: "white" | "black" | null; // Player's color (null for spectators)
+    isSpectator?: boolean; // Whether this is a spectator view
 };
 
-const ChessBoard = ({ position, onMove, playerColor }:ChessBoardProps) => {
+const ChessBoard = ({ position, onMove, playerColor, isSpectator = false }:ChessBoardProps) => {
     return (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
             {/* <h2>You are playing as {playerColor}</h2> */}
             <Chessboard 
                 options={{
                     position:position,
-                    onPieceDrop: ({sourceSquare , targetSquare}) =>{
+                    onPieceDrop: isSpectator ? undefined : ({sourceSquare , targetSquare}) =>{
                         if (!targetSquare) return false;
                         return  onMove({
                             from: sourceSquare as Square,
                             to: targetSquare as Square
                         });
                     },
-                    boardOrientation:playerColor, // Ensures correct perspective
+                    boardOrientation: playerColor || "white", // Default to white for spectators
                     //boardWidth:500,
-                    canDragPiece:({
+                    canDragPiece: isSpectator ? () => false : ({
                         //piece
                         square
                     }) => {

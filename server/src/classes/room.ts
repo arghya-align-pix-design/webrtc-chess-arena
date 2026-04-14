@@ -1,16 +1,25 @@
 import { Producer, Router, AppData } from "mediasoup/types";
 import { Peer } from "./peer";
 
+export enum GameMode {
+    CHALLENGE = 'CHALLENGE',
+    FRIENDLY = 'FRIENDLY'
+}
+
 export class Room{
     public name : string;
     public id : string;
+    public gameMode: GameMode;
+    public broadcastRoomId: string;
     public peers : Peer[];
     public router : Router | null;
     public producers : Producer[];
 
-    constructor(roomName : string, roomId : string, router : Router){
+    constructor(roomName : string, roomId : string, router : Router, gameMode: GameMode = GameMode.CHALLENGE){
         this.name = roomName,
         this.id = roomId,
+        this.gameMode = gameMode,
+        this.broadcastRoomId = '',
         this.peers=[],
         this.router=router,
         this.producers=[]

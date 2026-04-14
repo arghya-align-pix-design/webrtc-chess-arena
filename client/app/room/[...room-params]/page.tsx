@@ -9,7 +9,7 @@ import { Chess } from "chess.js";
 import { types as mediasoupTypes } from "mediasoup-client"
 import React from "react"
 
-const BASE_URL ="http://localhost:8080"; // process.env.NEXT_PUBLIC_BACKEND_URL || 
+const BASE_URL ='http://localhost:8080'//"https://65.1.130.45.sslip.io"; // process.env.NEXT_PUBLIC_BACKEND_URL || 
 
 type AppData = mediasoupTypes.AppData;
 type Producer = mediasoupTypes.Producer;
@@ -51,7 +51,6 @@ export default function Room(){
     const micProducersRef=useRef<Producer>(null);
     const camProducersRef=useRef<Producer>(null);
     //Player data
-    //Player data
     const [game, setGame] = useState(new Chess());
     const [playerColor, setPlayerColor] = useState<"white" | "black" | null>(null);
     const [initialFen, setInitialFen] = useState<string>("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
@@ -84,6 +83,7 @@ export default function Room(){
         socketRef.current.on('gameStateSync', (data: { fen: string }) => {
             console.log('[gameStateSync]', data.fen);
             setInitialFen(data.fen);
+            setGame(new Chess(data.fen)); // Also update current game state
         });
 
         joinRoom();
@@ -315,8 +315,19 @@ export default function Room(){
         })
     }
     
-    return <div className="flex p-10 w-screen h-screen items-center justify-between">
-        {/* LEFT VIDEO-OPPONENT'S VIDEO */}
+    return (
+        <>
+            {/* OVERLAY FOR PORTRAIT SCREENS */}
+            <div className="fixed inset-0 z-[100] hidden portrait:flex flex-col items-center justify-center bg-zinc-950 text-white p-6">
+                <div className="text-7xl mb-6 animate-pulse">📱🔄</div>
+                <h2 className="text-3xl font-extrabold text-center mb-4 tracking-tight">Rotate Your Device</h2>
+                <p className="text-center text-zinc-400 text-lg max-w-sm">
+                    This game is best played in <strong>Landscape Mode</strong>! Please turn your phone sideways to continue playing.
+                </p>
+            </div>
+
+            <div className="flex p-4 md:p-10 w-screen h-screen items-center justify-between bg-zinc-950">
+                {/* LEFT VIDEO-OPPONENT'S VIDEO */}
         <div className="w-1/5 h-full flex flex-col justify-start">
             <video ref={localVideoRef} autoPlay playsInline muted={true} className="w-full border rounded-md" style={{aspectRatio : 16/11}}/>
         </div>
@@ -324,12 +335,13 @@ export default function Room(){
             <div className="h-full border rounded-md flex items-center justify-center" style={{aspectRatio : 1}}>
                 {playerColor && socketRef.current &&  (
                     <ChessManager
-                        // game={game}
-                        // setGame={setGame}
+                        game={game}
+                        setGame={setGame}
                         playerColor={playerColor}
                         socket={socketRef.current}
                         roomId={roomIdRef.current}
                         initialFen={initialFen}
+                        isSpectator={false}
                     />
                 )}
             </div>
@@ -339,4 +351,6 @@ export default function Room(){
             <video ref={remoteVideoRef} autoPlay playsInline className="w-full border rounded-md" style={{aspectRatio : 16/11}}/>
         </div>
     </div>
+    </>
+    )
 }

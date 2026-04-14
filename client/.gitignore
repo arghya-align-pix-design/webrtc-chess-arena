@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+chessKeyPair.pem
+chessKP.pem
+chessKeyPair.pem
+chessKeyPair.pub
+chessKP.pem
 
 # vercel
 .vercel

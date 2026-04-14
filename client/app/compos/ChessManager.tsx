@@ -11,27 +11,22 @@ type MoveData = {
 };
 
 type ChessManagerProps = {
-    // game: Chess;
-    // setGame: (game: Chess) => void;
-    playerColor: "white" | "black";
-    socket: Socket;
-    roomId: string | null;
+    game: Chess;
+    setGame: (game: Chess) => void;
+    playerColor: "white" | "black" | null;
+    socket?: Socket;
+    roomId?: string | null;
     initialFen?: string;
+    isSpectator?: boolean;
 };
 
 const ChessManager = ({ 
-    //game, setGame, 
-    playerColor, socket, roomId, initialFen }: ChessManagerProps) => {
+    game, setGame, 
+    playerColor, socket, roomId, initialFen, isSpectator = false }: ChessManagerProps) => {
     const [warning, setWarning] = useState("");
-    //const gameRef = useRef(new Chess()); // ✅ stable instance
-    const [game,setGame]=useState(new Chess(initialFen));
-    //const [fen, setFen] = useState(gameRef.current.fen());
+    // Removed local game state - using props only
 
-    useEffect(() => {
-        if (initialFen) {
-            setGame(new Chess(initialFen));
-        }
-    }, [initialFen]);
+    // Removed useEffect for local game state - parent handles initialFen via props
 
     const handleOpponentMove = useCallback(({ from, to, fen }: MoveData) => {
         console.log(`Move received: ${from} -> ${to}`);
@@ -51,18 +46,32 @@ const ChessManager = ({
     
     useEffect(()=>{
         
-        // Listen for opponent's move
-        socket.on("moveMade", handleOpponentMove);
-        return () => {
-            socket.off("moveMade", handleOpponentMove); // clean up
-        };
+        // Listen for opponent's move (only if we have a socket and are not spectator)
+        if (socket && !isSpectator) {
+            socket.on("moveMade", handleOpponentMove);
+            return () => {
+                socket.off("moveMade", handleOpponentMove); // clean up
+            };
+        }
     
-    },[socket, handleOpponentMove]) //setGame,
+    },[socket, handleOpponentMove, isSpectator])
 
 
     const handleMove = (move: { from: Square; to: Square }): boolean => {
-        //const game = gameRef.current;// jst added
-        
+        // Prevent moves for spectators
+        if (isSpectator) {
+            setWarning("👁️ Spectators cannot make moves!");
+            setTimeout(() => setWarning(""), 2000);
+            return false;
+        }
+
+        // Prevent moves if no socket (shouldn't happen for players)
+        if (!socket) {
+            setWarning("❌ Connection error!");
+            setTimeout(() => setWarning(""), 2000);
+            return false;
+        }
+
         const turn = game.turn(); // 'w' or 'b'
         const isPlayerTurn =
             (playerColor === "white" && turn === "w") ||
@@ -73,7 +82,6 @@ const ChessManager = ({
             setWarning("⛔ Not your turn!");
             setTimeout(() => setWarning(""), 2000);
             return false;
-            //return false;
         }
 
         const gameCopy = new Chess(game.fen());
