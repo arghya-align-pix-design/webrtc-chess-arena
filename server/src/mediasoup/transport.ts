@@ -21,7 +21,7 @@ export async function createWebRtcTransport(router: mediasoup.types.Router){
         initialAvailableOutgoingBitrate: 1000000,
         maxIncomingBitrate: 1500000,
         minPort: 40000,
-        maxPort: 40499
+        maxPort: 41000
     }
     const transport=await router.createWebRtcTransport(webRtcTransport_Options);
     console.log('[Transport] Transport created successfully with id : ',transport.id);

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, memo, useRef, useState } from "react"
+import { useEffect, memo, useRef, useState, useCallback } from "react"
 import { io, Socket } from "socket.io-client"
 import { useRouter } from "next/navigation"
 import { Device } from "mediasoup-client"
@@ -16,7 +16,10 @@ type RtpCapabilities = mediasoupTypes.RtpCapabilities;
 type RtpParameters = mediasoupTypes.RtpParameters;
 type Transport = mediasoupTypes.Transport;
 
-export default function SpectatorRoom({ params }: { params: { broadcastRoomId: string } }) {
+export default function SpectatorRoom({ params }: { params: Promise<{ broadcastRoomId: string }> }) {
+    const unwrappedParams = React.use(params);
+    const broadcastRoomId = unwrappedParams.broadcastRoomId;
+
     const socketRef = useRef<Socket | null>(null);
     const broadcastRoomIdRef = useRef<string>(null);
     const router = useRouter();
@@ -41,18 +44,127 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
     const selfVideoRef = useRef<HTMLVideoElement>(null);
     const localStreamRef = useRef<MediaStream>(null);
 
+    // Track which player socketId maps to which video ref (player1 or player2)
+    const playerIdMapRef = useRef<{ player1Id: string | null; player2Id: string | null }>({
+        player1Id: null,
+        player2Id: null
+    });
+
     // Spectator video grid refs
     const spectatorVideoRefs = useRef<{ [spectatorId: string]: HTMLVideoElement }>({});
 
     useEffect(() => {
-        broadcastRoomIdRef.current = params.broadcastRoomId;
+        broadcastRoomIdRef.current = broadcastRoomId;
         joinBroadcastRoom();
         return () => {
             if (socketRef.current) {
                 socketRef.current.disconnect();
             }
         };
-    }, [params.broadcastRoomId]);
+    }, [broadcastRoomId]);
+
+    // Attach a single piped consumer's track to the correct player video element
+    const attachPlayerMedia = useCallback((playerId: string, kind: string, track: MediaStreamTrack) => {
+        // Assign player IDs to slots on first encounter
+        const map = playerIdMapRef.current;
+        if (!map.player1Id && !map.player2Id) {
+            map.player1Id = playerId;
+        } else if (map.player1Id && map.player1Id !== playerId && !map.player2Id) {
+            map.player2Id = playerId;
+        }
+
+        const isPlayer1 = map.player1Id === playerId;
+        const videoRef = isPlayer1 ? player1VideoRef : player2VideoRef;
+
+        if (kind === 'video') {
+            const stream = new MediaStream([track]);
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                videoRef.current.play().catch(() => console.debug('[spectator] video play blocked'));
+            }
+        } else {
+            // Audio: create a hidden <audio> element so player audio plays
+            const audio = document.createElement('audio');
+            audio.autoplay = true;
+            audio.srcObject = new MediaStream([track]);
+            audio.play().catch(() => console.debug('[spectator] audio play blocked'));
+            document.body.appendChild(audio);
+        }
+    }, []);
+
+    // Consume all piped player producers from the Broadcast Router in one call
+    const consumeAllPlayerMedia = useCallback(async () => {
+        if (!recvTransportRef.current || !deviceRef.current || !socketRef.current) return;
+
+        socketRef.current.emit('consume-game-broadcast', {
+            broadcastRoomId: broadcastRoomId,
+            rtpCapabilities: deviceRef.current.rtpCapabilities
+        }, async (response: any) => {
+            if (response.error) {
+                console.error('[spectator] consume-game-broadcast error:', response.error);
+                return;
+            }
+
+            const { consumers } = response;
+            console.log(`[spectator] Received ${consumers.length} player media consumers`);
+
+            for (const { consumerId, producerId, playerId, kind, rtpParameters } of consumers) {
+                try {
+                    const consumer = await recvTransportRef.current?.consume({
+                        id: consumerId,
+                        producerId,
+                        kind,
+                        rtpParameters
+                    });
+
+                    if (consumer) {
+                        attachPlayerMedia(playerId, kind, consumer.track);
+                        console.log(`[spectator] Consuming player ${playerId} ${kind}`);
+                    }
+                } catch (e) {
+                    console.error(`[spectator] Failed to consume player media:`, e);
+                }
+            }
+        });
+    }, [broadcastRoomId, attachPlayerMedia]);
+
+    // Consume a single newly-piped player producer (when a player starts producing after spectator already joined)
+    const consumeSinglePlayerMedia = useCallback(async (producerId: string, playerId: string, kind: string) => {
+        if (!recvTransportRef.current || !deviceRef.current || !socketRef.current) return;
+
+        // Re-use consume-game-broadcast which now handles everything via piped producers
+        // But for a single new producer, we still call consume-game-broadcast which returns ALL
+        // However, we may already have consumers for the other producers.
+        // More efficient: request a single consume. Let's reuse the existing flow.
+        socketRef.current.emit('consume-game-broadcast', {
+            broadcastRoomId: broadcastRoomId,
+            rtpCapabilities: deviceRef.current.rtpCapabilities
+        }, async (response: any) => {
+            if (response.error) {
+                console.error('[spectator] consume-game-broadcast (single) error:', response.error);
+                return;
+            }
+
+            const { consumers } = response;
+            for (const { consumerId, producerId: pId, playerId: plId, kind: k, rtpParameters } of consumers) {
+                try {
+                    const consumer = await recvTransportRef.current?.consume({
+                        id: consumerId,
+                        producerId: pId,
+                        kind: k,
+                        rtpParameters
+                    });
+
+                    if (consumer) {
+                        attachPlayerMedia(plId, k, consumer.track);
+                        console.log(`[spectator] Consuming newly piped player ${plId} ${k}`);
+                    }
+                } catch (e) {
+                    console.error(`[spectator] Failed to consume newly piped media:`, e);
+                }
+            }
+        });
+    }, [broadcastRoomId, attachPlayerMedia]);
 
     const joinBroadcastRoom = async () => {
         socketRef.current = io(`${BASE_URL}`, { autoConnect: true });
@@ -62,11 +174,11 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
 
             socketRef.current?.emit('join-broadcast', {
                 spectatorName: 'Spectator', // TODO: Get from user input
-                broadcastRoomId: params.broadcastRoomId
+                broadcastRoomId: broadcastRoomId
             }, async (response: any) => {
                 if (response.error) {
                     alert(response.error);
-                    router.push(`/broadcast/${params.broadcastRoomId}`);
+                    router.push(`/broadcast/${broadcastRoomId}`);
                     return;
                 }
 
@@ -77,6 +189,23 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 setInitialFen(response.currentFEN);
                 setSpectatorCount(response.spectatorCount);
 
+                const currentSpectatorId = socketRef.current?.id;
+                if (response.spectatorList) {
+                    setSpectators(
+                        response.spectatorList
+                            .filter((spectator: any) => spectator.id !== currentSpectatorId)
+                            .map((spectator: any) => ({ id: spectator.id, name: spectator.name }))
+                    );
+                }
+
+                // Set player ID mapping from response
+                if (response.players.length > 0) {
+                    playerIdMapRef.current.player1Id = response.players[0]?.id || null;
+                }
+                if (response.players.length > 1) {
+                    playerIdMapRef.current.player2Id = response.players[1]?.id || null;
+                }
+
                 // Load device
                 await loadDevice(response.routerRtpCapabilities);
 
@@ -84,15 +213,21 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 await createSendTransport();
                 await createRecvTransport();
 
-                // Start producing spectator media
+                // Start producing spectator media (viewer ↔ viewer)
                 await startSpectatorMedia();
 
-                // Consume existing spectator media
+                // Consume existing spectator media (viewer ↔ viewer)
                 if (response.spectatorProducers) {
                     for (const producer of response.spectatorProducers) {
                         await consumeSpectatorMedia(producer.id, producer.appData);
                     }
                 }
+
+                // TASK 4: Auto-consume piped player media (players' video+audio)
+                // Small delay to ensure recv transport is fully ready
+                setTimeout(() => {
+                    consumeAllPlayerMedia();
+                }, 500);
             });
         });
 
@@ -122,6 +257,12 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
             console.log('[spectator] New spectator media:', data);
             await consumeSpectatorMedia(data.producerId, data.appData);
         });
+
+        // Listen for late-arriving player piped media (player starts cam/mic after spectator joined)
+        socketRef.current.on('player-media-piped', async (data: { producerId: string; playerId: string; kind: string }) => {
+            console.log('[spectator] New player media piped:', data);
+            await consumeSinglePlayerMedia(data.producerId, data.playerId, data.kind);
+        });
     };
 
     const loadDevice = async (routerRtpCapabilities: RtpCapabilities) => {
@@ -138,7 +279,7 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
         if (!deviceRef.current) return;
 
         socketRef.current?.emit('create-transport-broadcast', {
-            broadcastRoomId: params.broadcastRoomId,
+            broadcastRoomId: broadcastRoomId,
             direction: 'send'
         }, async (response: any) => {
             if (response.error) {
@@ -151,17 +292,33 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 iceParameters: response.iceParameters,
                 iceCandidates: response.iceCandidates,
                 dtlsParameters: response.dtlsParameters
-            });
+            }) ?? null;
 
             sendTransportRef.current?.on('connect', async ({ dtlsParameters }, callback) => {
                 socketRef.current?.emit('connect-transport-broadcast', {
-                    broadcastRoomId: params.broadcastRoomId,
+                    broadcastRoomId: broadcastRoomId,
                     transportId: sendTransportRef.current?.id,
                     dtlsParameters
                 }, ({ connected }: any) => {
                     if (connected) {
                         callback();
                     }
+                });
+            });
+
+            sendTransportRef.current?.on('produce', async ({ kind, rtpParameters, appData }, callback) => {
+                socketRef.current?.emit('produce-broadcast', {
+                    broadcastRoomId: broadcastRoomId,
+                    transportId: sendTransportRef.current?.id,
+                    kind,
+                    rtpParameters,
+                    appData
+                }, (response: any) => {
+                    if (response.error) {
+                        console.error('[spectator] produce-broadcast error:', response.error);
+                        return;
+                    }
+                    callback({ id: response.id });
                 });
             });
 
@@ -173,7 +330,7 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
         if (!deviceRef.current) return;
 
         socketRef.current?.emit('create-transport-broadcast', {
-            broadcastRoomId: params.broadcastRoomId,
+            broadcastRoomId: broadcastRoomId,
             direction: 'recv'
         }, async (response: any) => {
             if (response.error) {
@@ -186,11 +343,11 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 iceParameters: response.iceParameters,
                 iceCandidates: response.iceCandidates,
                 dtlsParameters: response.dtlsParameters
-            });
+            }) ?? null;
 
             recvTransportRef.current?.on('connect', async ({ dtlsParameters }, callback) => {
                 socketRef.current?.emit('connect-transport-broadcast', {
-                    broadcastRoomId: params.broadcastRoomId,
+                    broadcastRoomId: broadcastRoomId,
                     transportId: recvTransportRef.current?.id,
                     dtlsParameters
                 }, ({ connected }: any) => {
@@ -219,36 +376,20 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 selfVideoRef.current.muted = true;
             }
 
-            // Produce video
+            // Produce video via the send transport's 'produce' event handler
             if (sendTransportRef.current) {
                 const videoTrack = stream.getVideoTracks()[0];
-                const videoProducer = await sendTransportRef.current.produce({
+                await sendTransportRef.current.produce({
                     track: videoTrack,
-                    appData: { mediaTag: 'video' }
-                });
-
-                socketRef.current?.emit('produce-broadcast', {
-                    broadcastRoomId: params.broadcastRoomId,
-                    transportId: sendTransportRef.current.id,
-                    kind: 'video',
-                    rtpParameters: videoProducer.rtpParameters,
                     appData: { mediaTag: 'video' }
                 });
             }
 
-            // Produce audio
+            // Produce audio via the send transport's 'produce' event handler
             if (sendTransportRef.current) {
                 const audioTrack = stream.getAudioTracks()[0];
-                const audioProducer = await sendTransportRef.current.produce({
+                await sendTransportRef.current.produce({
                     track: audioTrack,
-                    appData: { mediaTag: 'audio' }
-                });
-
-                socketRef.current?.emit('produce-broadcast', {
-                    broadcastRoomId: params.broadcastRoomId,
-                    transportId: sendTransportRef.current.id,
-                    kind: 'audio',
-                    rtpParameters: audioProducer.rtpParameters,
                     appData: { mediaTag: 'audio' }
                 });
             }
@@ -263,7 +404,7 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
         if (!recvTransportRef.current) return;
 
         socketRef.current?.emit('consume-spectator-media', {
-            broadcastRoomId: params.broadcastRoomId,
+            broadcastRoomId: broadcastRoomId,
             producerId,
             rtpCapabilities: deviceRef.current?.rtpCapabilities
         }, async (response: any) => {
@@ -283,16 +424,24 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                 const stream = new MediaStream([consumer.track]);
 
                 // Find the spectator video element
-                const spectatorId = appData.peerId;
+                const spectatorId = appData.peerId as string;
                 const videoElement = spectatorVideoRefs.current[spectatorId];
 
                 if (videoElement && consumer.kind === 'video') {
                     videoElement.srcObject = stream;
                 }
 
+                if (consumer.kind === 'audio') {
+                    const audio = document.createElement('audio');
+                    audio.autoplay = true;
+                    audio.srcObject = stream;
+                    audio.play().catch(() => console.debug('[spectator] spectator audio play blocked'));
+                    document.body.appendChild(audio);
+                }
+
                 // Resume consumer
                 socketRef.current?.emit('resume-consumer-broadcast', {
-                    broadcastRoomId: params.broadcastRoomId,
+                    broadcastRoomId: broadcastRoomId,
                     consumerId: consumer.id
                 });
             }
@@ -387,7 +536,7 @@ export default function SpectatorRoom({ params }: { params: { broadcastRoomId: s
                             <div key={spectator.id}>
                                 <div className="text-sm text-gray-600 mb-1">{spectator.name}</div>
                                 <VideoSection
-                                    videoRef={(el) => {
+                                    videoRef={(el: HTMLVideoElement | null) => {
                                         if (el) spectatorVideoRefs.current[spectator.id] = el;
                                     }}
                                     label={spectator.name}

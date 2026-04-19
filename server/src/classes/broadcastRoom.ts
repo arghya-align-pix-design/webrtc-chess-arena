@@ -12,13 +12,8 @@ export class BroadcastRoom {
     public router: Router | null;
 
     // Piped producers from game room
-    public pipedPlayer1VideoProducerId: string;
-    public pipedPlayer1AudioProducerId: string;
-    public pipedPlayer2VideoProducerId: string;
-    public pipedPlayer2AudioProducerId: string;
-
-    // For FRIENDLY mode: aggregated spectator audio
-    public spectatorAggregatedAudioProducerId: string;
+    // key = player socketId, value = array of their piped producers (audio + video)
+    public pipedProducers: Map<string, Producer[]> = new Map();
 
     constructor(gameRoomId: string, broadcastRoomId: string, router: Router, gameMode: GameMode) {
         this.roomId = gameRoomId;
@@ -27,11 +22,6 @@ export class BroadcastRoom {
         this.gameMode = gameMode;
         this.spectators = [];
         this.router = router;
-        this.pipedPlayer1VideoProducerId = '';
-        this.pipedPlayer1AudioProducerId = '';
-        this.pipedPlayer2VideoProducerId = '';
-        this.pipedPlayer2AudioProducerId = '';
-        this.spectatorAggregatedAudioProducerId = '';
     }
 
     public join(spectator: Peer): boolean {
@@ -54,6 +44,39 @@ export class BroadcastRoom {
     public isFull(): boolean {
         return this.spectators.length >= this.maxSpectators;
     }
+
+    // --- Piped producer helpers (cross-router from Game → Broadcast) ---
+
+    public addPipedProducer(producer: Producer, playerSocketId: string): void {
+        const existing = this.pipedProducers.get(playerSocketId) || [];
+        existing.push(producer);
+        this.pipedProducers.set(playerSocketId, existing);
+    }
+
+    public removePipedProducers(playerSocketId: string): void {
+        const producers = this.pipedProducers.get(playerSocketId) || [];
+        producers.forEach(p => p.close());
+        this.pipedProducers.delete(playerSocketId);
+    }
+
+    public getAllPipedProducers(): { producerId: string; playerId: string; kind: 'video' | 'audio' }[] {
+        const result: { producerId: string; playerId: string; kind: 'video' | 'audio' }[] = [];
+        for (const [playerId, producers] of this.pipedProducers) {
+            for (const p of producers) {
+                result.push({ producerId: p.id, playerId, kind: p.kind as 'video' | 'audio' });
+            }
+        }
+        return result;
+    }
+
+    public clearAllPipedProducers(): void {
+        for (const [, producers] of this.pipedProducers) {
+            producers.forEach(p => p.close());
+        }
+        this.pipedProducers.clear();
+    }
+
+    // --- Spectator producer helpers (viewer ↔ viewer media within Broadcast Router) ---
 
     public getSpectatorProducers(): {id: string, kind: 'video' | 'audio', appData: any}[] {
         const producersInfo: {id: string, kind: 'video' | 'audio', appData: any}[] = [];

@@ -24,7 +24,9 @@ export default function Home() {
         text-white font-semibold tracking-wide
         shadow-lg
         transition-all duration-300
-        hover:bg-white/20 hover:scale-105 hover:shadow-xl">
+        hover:bg-white/20 hover:scale-105 hover:shadow-xl"
+        onClick={()=>router.push('/create-game')}
+        >
           Create Game
         </button>
         <button className="px-7 py-3 rounded-xl bg-white/10 backdrop-blur-md 
@@ -32,7 +34,9 @@ export default function Home() {
         text-white font-semibold tracking-wide
         shadow-lg
         transition-all duration-300
-        hover:bg-white/20 hover:scale-105 hover:shadow-xl" >
+        hover:bg-white/20 hover:scale-105 hover:shadow-xl"
+        onClick={()=>router.push('/join-game')}
+        >
           Join Game
         </button>
         {/* <div onClick={()=>router.push('/join-game')} className="px-7 py-1.5 border border-zinc-800 rounded-md cursor-pointer bg-zinc-800 text-white hover:bg-zinc-700 text-[16px]">

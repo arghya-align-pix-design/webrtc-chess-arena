@@ -13,7 +13,7 @@ const app=express();
 app.use(cors({
   origin:  '*',  //'http://localhost:3000',
   methods: ["GET", "POST"],
-  //credentials: true
+  credentials: true
 }));
 app.use(express.json());
 
@@ -233,6 +233,9 @@ io.on('connection',(socket)=>{
         // Get existing spectator producers
         const spectatorProducers = broadcastRoom.getSpectatorProducers();
 
+        // Get piped player producers available for consumption
+        const pipedProducers = broadcastRoom.getAllPipedProducers();
+
         callback({
             routerRtpCapabilities: broadcastRoom.router?.rtpCapabilities,
             gameRoomId: broadcastRoom.gameRoomId,
@@ -240,7 +243,9 @@ io.on('connection',(socket)=>{
             players: players,
             currentFEN: chessRooms[broadcastRoom.gameRoomId]?.fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
             spectatorProducers: spectatorProducers,
-            spectatorCount: broadcastRoom.getSpectatorCount()
+            pipedProducers: pipedProducers,
+            spectatorCount: broadcastRoom.getSpectatorCount(),
+            spectatorList: broadcastRoom.spectators.map((spec) => ({ id: spec.socketId, name: spec.name }))
         });
 
         // Notify other spectators
@@ -366,7 +371,7 @@ io.on('connection',(socket)=>{
         } 
         const peer=room.peers.find((peer : Peer)=>peer.socketId==socket.id);
         if(!peer){
-            callback.log('[produce] peer not found');
+            console.log('[produce] peer not found');
             return callback({error : 'peer not found'});
         } 
         if((peer.upTransport && peer.upTransport.id!=transportId) || !peer.upTransport){
@@ -392,6 +397,32 @@ io.on('connection',(socket)=>{
         })
         room.producers.push(producer);
         console.log('[new producer] : ',producer.id);
+
+        // --- TASK 1: Pipe this player producer to the Broadcast Router ---
+        if (room.broadcastRoomId) {
+            const broadcastRoom = broadcastRooms.get(room.broadcastRoomId);
+            if (broadcastRoom && broadcastRoom.router && room.router) {
+                try {
+                    const { pipeProducer } = await room.router.pipeToRouter({
+                        producerId: producer.id,
+                        router: broadcastRoom.router,
+                    });
+                    if (pipeProducer) {
+                        broadcastRoom.addPipedProducer(pipeProducer, socket.id);
+                        console.log(`[produce] piped ${kind} producer ${producer.id} -> broadcast ${room.broadcastRoomId} as ${pipeProducer.id}`);
+
+                        // Notify spectators already in the broadcast room about new piped media
+                        io.to(room.broadcastRoomId).emit('player-media-piped', {
+                            producerId: pipeProducer.id,
+                            playerId: socket.id,
+                            kind: pipeProducer.kind
+                        });
+                    }
+                } catch (e) {
+                    console.error('[produce] pipeToRouter failed:', e);
+                }
+            }
+        }
     })
 
     // Broadcast room produce handler
@@ -511,7 +542,8 @@ io.on('connection',(socket)=>{
         })
     })
 
-    socket.on('consume-game-broadcast', async ({ broadcastRoomId, producerId, rtpCapabilities }, callback) => {
+    // TASK 3: Fixed consume-game-broadcast — consumes from piped producers on the Broadcast Router
+    socket.on('consume-game-broadcast', async ({ broadcastRoomId, rtpCapabilities }, callback) => {
         const broadcastRoom = broadcastRooms.get(broadcastRoomId);
         if (!broadcastRoom) return callback({ error: 'broadcast room not found' });
         const spectator = broadcastRoom.spectators.find((s: Peer) => s.socketId === socket.id);
@@ -523,40 +555,40 @@ io.on('connection',(socket)=>{
             return callback({ error: 'transport not found' });
         }
 
-        // Find piped producer from game room
-        const gameRoom = rooms.get(broadcastRoom.gameRoomId);
-        if (!gameRoom) return callback({ error: 'game room not found' });
+        if (!broadcastRoom.router) {
+            return callback({ error: 'broadcast router not found' });
+        }
 
-        let producer: Producer | null = null;
-        for (const player of gameRoom.peers) {
-            if (player.camProducer?.id === producerId) {
-                producer = player.camProducer;
-                break;
+        // Loop over ALL piped producers and create a consumer for each
+        const consumers: any[] = [];
+        for (const { producerId, playerId, kind } of broadcastRoom.getAllPipedProducers()) {
+            if (!broadcastRoom.router.canConsume({ producerId, rtpCapabilities })) {
+                console.log(`[consume-game-broadcast] cannot consume piped producer ${producerId}`);
+                continue;
             }
-            if (player.micProducer?.id === producerId) {
-                producer = player.micProducer;
-                break;
+
+            try {
+                const consumer = await transport.consume({
+                    producerId,
+                    rtpCapabilities,
+                    paused: true,
+                });
+                spectator.consumers.push(consumer);
+                consumers.push({
+                    consumerId: consumer.id,
+                    producerId,
+                    playerId,
+                    kind,
+                    rtpParameters: consumer.rtpParameters,
+                });
+                console.log(`[consume-game-broadcast] created consumer for piped ${kind} from player ${playerId}`);
+            } catch (e) {
+                console.error(`[consume-game-broadcast] failed to consume piped producer ${producerId}:`, e);
             }
         }
 
-        if (!producer) {
-            console.log('[consume-game-broadcast] piped producer not found');
-            return callback({ error: 'producer not found' });
-        }
-
-        const consumer = await transport.consume({
-            producerId,
-            rtpCapabilities,
-            paused: true
-        })
-        spectator.consumers.push(consumer);
-        console.log('[consume-game-broadcast] game broadcast consumer created successfully');
-        callback({
-            id: consumer.id,
-            producerId,
-            kind: consumer.kind,
-            rtpParameters: consumer.rtpParameters
-        })
+        console.log(`[consume-game-broadcast] total consumers created: ${consumers.length}`);
+        callback({ consumers });
     })
 
     socket.on('resume-consumer',async ({roomId,consumerId},callback)=>{
@@ -590,7 +622,7 @@ io.on('connection',(socket)=>{
         // Handle game room disconnect
         for (const [roomId, room] of rooms.entries()) {
             const peerIndex = room.peers.findIndex(p => p.socketId === socket.id);
-            if (peerIndex !== -1) {
+            if (peerIndex !== -1 ) { 
                 // Found the peer, remove them
                 const peer = room.peers[peerIndex];
                 
@@ -601,6 +633,15 @@ io.on('connection',(socket)=>{
                 if (peer.camProducer) peer.camProducer.close();
                 if (peer.micProducer) peer.micProducer.close();
 
+                // Clean up piped producers for this player in the broadcast room
+                if (room.broadcastRoomId) {
+                    const broadcastRoom = broadcastRooms.get(room.broadcastRoomId);
+                    if (broadcastRoom) {
+                        broadcastRoom.removePipedProducers(socket.id);
+                        console.log(`[disconnect] Removed piped producers for player ${socket.id} from broadcast room ${room.broadcastRoomId}`);
+                    }
+                }
+
                 room.peers.splice(peerIndex, 1);
                 
                 // Cleanup chess room allocation
@@ -609,15 +650,31 @@ io.on('connection',(socket)=>{
                 }
 
                 if (room.peers.length === 0) {
-                    // Both peers left -> fully clean up room
+                    // Both peers left -> game room is closed.
                     if (room.router) {
                         room.router.close();
                     }
+
+                    const broadcastRoom = room.broadcastRoomId ? broadcastRooms.get(room.broadcastRoomId) : undefined;
+                    if (broadcastRoom) {
+                        // Clear piped player producers since the game room has ended.
+                        broadcastRoom.clearAllPipedProducers();
+
+                        if (broadcastRoom.getSpectatorCount() === 0) {
+                            // Only close the broadcast room when there are no spectators left.
+                            if (broadcastRoom.router) {
+                                broadcastRoom.router.close();
+                            }
+                            broadcastRooms.delete(room.broadcastRoomId);
+                            console.log(`[disconnect] Broadcast room ${room.broadcastRoomId} cleaned up because game room closed and no spectators remain.`);
+                        } else {
+                            console.log(`[disconnect] Game room ${roomId} closed, broadcast room ${room.broadcastRoomId} remains open for ${broadcastRoom.getSpectatorCount()} spectator(s).`);
+                        }
+                    }
+
                     rooms.delete(roomId);
                     delete chessRooms[roomId];
                     console.log(`[disconnect] Room ${roomId} completely cleaned up (empty).`);
-                    console.log ("trying to look for the room", chessRooms[roomId] );
-                    console.log("Remaining rooms:", rooms);
                 } else {
                     console.log(`[disconnect] Player left room ${roomId}. Room kept awake.`);
                     socket.to(roomId).emit('playerDisconnected', { socketId: socket.id, name: peer.name });
@@ -651,14 +708,20 @@ io.on('connection',(socket)=>{
                     spectatorCount: broadcastRoom.getSpectatorCount()
                 });
 
-                // If broadcast room is empty, clean it up
-                if (broadcastRoom.spectators.length === 0) {
-                    if (broadcastRoom.router) {
-                        broadcastRoom.router.close();
+                if (broadcastRoom.getSpectatorCount() === 0) {
+                    const linkedGameRoom = rooms.get(broadcastRoom.gameRoomId);
+                    if (!linkedGameRoom) {
+                        // The game room is already closed, so close the broadcast room now.
+                        if (broadcastRoom.router) {
+                            broadcastRoom.router.close();
+                        }
+                        broadcastRooms.delete(broadcastRoomId);
+                        console.log(`[disconnect] Broadcast room ${broadcastRoomId} cleaned up because game room already closed and no spectators remain.`);
+                    } else {
+                        console.log(`[disconnect] Broadcast room ${broadcastRoomId} remains open because game room ${broadcastRoom.gameRoomId} is still active.`);
                     }
-                    broadcastRooms.delete(broadcastRoomId);
-                    console.log(`[disconnect] Broadcast room ${broadcastRoomId} completely cleaned up (empty).`);
                 }
+
                 break; // Stop iterating broadcast rooms once found
             }
         }

@@ -2,6 +2,7 @@
 import { useRouter } from "next/navigation"
 import { useRef, useState, useEffect } from "react";
 import axios from "axios";
+import React from "react";
 
 const BASE_URL = "http://localhost:8080"//"https://65.1.130.45.sslip.io"; //process.env.NEXT_PUBLIC_BACKEND_URL ||
 
@@ -14,7 +15,10 @@ interface BroadcastInfo {
     status: 'waiting' | 'in-game' | 'ended';
 }
 
-export default function BroadcastPage({ params }: { params: { broadcastRoomId: string } }) {
+export default function BroadcastPage({ params }: { params: Promise<{ broadcastRoomId: string }> }) {
+    const unwrappedParams = React.use(params);
+    const broadcastRoomId = unwrappedParams.broadcastRoomId;
+
     const router = useRouter();
     const nameRef = useRef<HTMLInputElement>(null);
     const [broadcastInfo, setBroadcastInfo] = useState<BroadcastInfo | null>(null);
@@ -23,11 +27,11 @@ export default function BroadcastPage({ params }: { params: { broadcastRoomId: s
 
     useEffect(() => {
         fetchBroadcastInfo();
-    }, [params.broadcastRoomId]);
+    }, [broadcastRoomId]);
 
     const fetchBroadcastInfo = async () => {
         try {
-            const response = await axios.get(`${BASE_URL}/broadcast/${params.broadcastRoomId}`);
+            const response = await axios.get(`${BASE_URL}/broadcast/${broadcastRoomId}`);
             setBroadcastInfo(response.data);
             setLoading(false);
         } catch (err) {
@@ -44,12 +48,12 @@ export default function BroadcastPage({ params }: { params: { broadcastRoomId: s
 
         try {
             const response = await axios.post(`${BASE_URL}/join-broadcast`, {
-                broadcastRoomId: params.broadcastRoomId,
+                broadcastRoomId: broadcastRoomId,
                 spectatorName: nameRef.current.value
             });
 
             // Navigate to spectator room view
-            router.push(`/spectator-room/${params.broadcastRoomId}`);
+            router.push(`/spectator-room/${broadcastRoomId}`);
         } catch (err: any) {
             if (err.response?.status === 403) {
                 alert('Broadcast room is full (maximum 10 spectators)');

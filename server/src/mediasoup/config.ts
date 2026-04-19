@@ -5,8 +5,8 @@ export const mediaCodecs: any = [
     clockRate: 48000,
     channels: 2,
     parameters: {
-      useinbandfec: 1, 
-      stereo: 1,       
+      useinbandfec: 1,
+      stereo: 1,
     }
   },
   {
@@ -15,7 +15,7 @@ export const mediaCodecs: any = [
     clockRate: 90000,
     parameters: {
       "packetization-mode": 1,
-      "profile-level-id": "640c28", 
+      "profile-level-id": "640c28",
     },
   },
   {
@@ -24,12 +24,12 @@ export const mediaCodecs: any = [
     clockRate: 90000,
     parameters: {
       "packetization-mode": 1,
-      "profile-level-id": "42e01f", 
+      "profile-level-id": "42e01f",
     },
   },
   {
     kind: "video",
-    mimeType: "video/VP8", 
+    mimeType: "video/VP8",
     clockRate: 90000,
   }
 ];
