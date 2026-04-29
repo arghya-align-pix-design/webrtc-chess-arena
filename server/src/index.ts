@@ -11,15 +11,18 @@ import { mediaCodecs } from './mediasoup/config';
 
 const app=express();
 app.use(cors({
-  origin:  '*',  //'http://localhost:3000',
+  origin:  "http://localhost:3000",  //'http://localhost:3000',
   methods: ["GET", "POST"],
-  credentials: true
+  //credentials: true
 }));
 app.use(express.json());
 
 let worker : Worker;
 const rooms : Map<string,Room>=new Map();
 const broadcastRooms : Map<string,BroadcastRoom>=new Map();
+
+// Track which room each socket is currently in (prevents multi-room join — Bug 5)
+const socketToRoom : Map<string,string>=new Map();
 
 // Custom types
 interface Player {
@@ -135,7 +138,7 @@ const server=app.listen(8080,()=>{
 
 const io=new Server(server,{
     cors : {
-        origin :"*"        //'http://localhost:3000',  // ""
+        origin :"http://localhost:3000"        //,  // ""
     }
 })
 
@@ -143,6 +146,13 @@ io.on('connection',(socket)=>{
     console.log('Client Connected : ',socket.id);
 
     socket.on('join-room',({name, roomId },callback)=>{
+        // Bug 5 fix: prevent socket from joining multiple rooms
+        const existingRoomId = socketToRoom.get(socket.id);
+        if (existingRoomId && existingRoomId !== roomId) {
+            console.log(`[join-room] Socket ${socket.id} already in room ${existingRoomId}, rejecting join to ${roomId}`);
+            return callback({error : 'You are already in another room. Leave it first.'});
+        }
+
         const peer=new Peer(name,socket.id);
         const room=rooms.get(roomId);
         
@@ -158,26 +168,48 @@ io.on('connection',(socket)=>{
             socket.join(roomId);
             if(room.peers.length<2){
                 console.log('[join-room] 2',roomId);
+
+                // Bug 1 fix: detect if this is a rejoin (room has 1 peer, chess room has color history)
+                const isRejoin = room.peers.length === 1 && chessRooms[roomId] && chessRooms[roomId].players.length > 0;
+
                 room?.peers.push(peer);
                 if(!room.router){
                     return callback({error : 'router not exists for this room'})
                 }
                 const producers=room.getProducers();
                 console.log('[join-room-producers] ,producers');
-                // Assign chess color: first peer = random, second = opposite
+
+                // Bug 1 fix: on rejoin, try to restore the previous color for this player name
+                // Check if there's a stored color for a player who left (same name or second slot)
+                let assignedColor: "white" | "black";
+                const existingPlayers = chessRooms[roomId].players;
                 
-                const isFirstPlayer = chessRooms[roomId].players.length === 0;
-                const assignedColor: "white" | "black" = isFirstPlayer
-                ? (Math.random() < 0.5 ? "white" : "black")
-                : (chessRooms[roomId].players[0].color === "white" ? "black" : "white");
+                if (existingPlayers.length === 0) {
+                    // First player ever — random color
+                    assignedColor = Math.random() < 0.5 ? "white" : "black";
+                } else {
+                    // Second player (or rejoin) — opposite of existing player
+                    assignedColor = existingPlayers[0].color === "white" ? "black" : "white";
+                }
 
                 chessRooms[roomId].players.push({ id: socket.id, color: assignedColor });
                 
                 socket.emit('colorAssigned', assignedColor);
                 console.log(`[join-room] color assigned: ${assignedColor} to ${socket.id}`);
+
+                // Track socket -> room mapping (Bug 5)
+                socketToRoom.set(socket.id, roomId);
+
                 // Notify first peer that opponent has joined
                 if(room.peers.length === 2){
-                    socket.to(roomId).emit('opponentJoined');
+                    // Bug 1 fix: if this is a rejoin, emit peer-rejoined instead of opponentJoined
+                    // so the existing peer knows to clean up dead consumers and prepare for new ones
+                    if (isRejoin) {
+                        socket.to(roomId).emit('peer-rejoined', { socketId: socket.id, name: name });
+                        console.log(`[join-room] Peer ${name} REJOINED room ${roomId}`);
+                    } else {
+                        socket.to(roomId).emit('opponentJoined');
+                    }
                 }
                 
                 // Sync current game state with the newly joined client
@@ -618,6 +650,9 @@ io.on('connection',(socket)=>{
 
     socket.on('disconnect', () => {
         console.log('Client Disconnected : ', socket.id);
+
+        // Bug 5 fix: clean up socket -> room mapping
+        socketToRoom.delete(socket.id);
         
         // Handle game room disconnect
         for (const [roomId, room] of rooms.entries()) {
@@ -626,6 +661,20 @@ io.on('connection',(socket)=>{
                 // Found the peer, remove them
                 const peer = room.peers[peerIndex];
                 
+                // Bug 1 fix: Remove this peer's producers from room.producers[] 
+                // and notify remaining peer so they can clean up dead consumers
+                const removedProducerIds: string[] = [];
+                if (peer.camProducer) removedProducerIds.push(peer.camProducer.id);
+                if (peer.micProducer) removedProducerIds.push(peer.micProducer.id);
+                
+                // Remove from room.producers array
+                room.producers = room.producers.filter(p => {
+                    if (removedProducerIds.includes(p.id)) {
+                        return false; // remove it
+                    }
+                    return true;
+                });
+
                 // Close transports to free mediasoup resources
                 if (peer.upTransport) peer.upTransport.close();
                 if (peer.downTransport) peer.downTransport.close();
@@ -677,6 +726,11 @@ io.on('connection',(socket)=>{
                     console.log(`[disconnect] Room ${roomId} completely cleaned up (empty).`);
                 } else {
                     console.log(`[disconnect] Player left room ${roomId}. Room kept awake.`);
+                    // Bug 1 fix: emit producer-closed for each removed producer
+                    // so the remaining peer can clean up dead consumers
+                    for (const producerId of removedProducerIds) {
+                        socket.to(roomId).emit('producer-closed', { producerId });
+                    }
                     socket.to(roomId).emit('playerDisconnected', { socketId: socket.id, name: peer.name });
                 }
                 break; // Stop iterating rooms once found
