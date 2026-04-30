@@ -1,0 +1,29 @@
+version: '3.9'
+
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: chess-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      # MediaSoup RTP/RTCP — UDP and TCP
+      # This is the port range MediaSoup workers will use for media transport.
+      # Must match the rtcMinPort/rtcMaxPort in your mediasoup worker config.
+      - "40000-50999:40000-50999/udp"
+      - "40000-50999:40000-50999/tcp"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - MEDIASOUP_ANNOUNCED_IP=${MEDIASOUP_ANNOUNCED_IP}
+    # Without host networking, mediasoup can have trouble
+    # figuring out which IP to announce for ICE candidates.
+    # We handle this explicitly via MEDIASOUP_ANNOUNCED_IP instead,
+    # which is cleaner and works fine on VPS.
+    volumes:
+      # Persist logs if your app writes to a file
+      - ./logs:/app/logs
