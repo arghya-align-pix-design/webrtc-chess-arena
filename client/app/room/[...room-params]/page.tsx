@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, memo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { io, Socket } from "socket.io-client"
 import { useInfoHook } from "@/store/info"
 import { useRouter } from "next/navigation"
@@ -9,28 +9,13 @@ import { Chess } from "chess.js";
 import { types as mediasoupTypes } from "mediasoup-client"
 import React from "react"
 
-const BASE_URL ='http://localhost:8080'//"https://65.1.130.45.sslip.io"; // process.env.NEXT_PUBLIC_BACKEND_URL || 
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8080'//"https://65.1.130.45.sslip.io"; // process.env.NEXT_PUBLIC_BACKEND_URL || 
 
 type AppData = mediasoupTypes.AppData;
 type Producer = mediasoupTypes.Producer;
 type RtpCapabilities = mediasoupTypes.RtpCapabilities;
 type RtpParameters = mediasoupTypes.RtpParameters;
 type Transport = mediasoupTypes.Transport;
-// const BACK_END='http://localhost:8080';
-
-// ✅ Memoized Video Component
-    // const VideoSection = memo(({ videoRef, muted = false }: any) => {
-    //     return (
-    //         <video
-    //             ref={videoRef}
-    //             autoPlay
-    //             playsInline
-    //             muted={muted}
-    //             className="w-full border rounded-md"
-    //             style={{ aspectRatio: 16 / 11 }}
-    //         />
-    //     );
-    // },[]);
 
 export default function Room(){
     const socketRef=useRef<Socket | null>(null);
@@ -42,14 +27,21 @@ export default function Room(){
     const deviceRef=useRef<Device>(null);
     const sendTransportRef=useRef<Transport>(null);
     const recvTransportRef=useRef<Transport>(null);
-    const selfProducerIds : string[]=[];
-    let consumedProducerIds : string[]=[];
+
+    // Bug 5 fix: moved from module-level to useRef so each component instance has its own copy
+    const selfProducerIdsRef=useRef<string[]>([]);
+    const consumedProducerIdsRef=useRef<string[]>([]);
+
     const remoteStreamRef=useRef<MediaStream>(null);
     const remoteVideoRef=useRef<HTMLVideoElement>(null);
     const localVideoRef=useRef<HTMLVideoElement>(null);
     const localStreamRef=useRef<MediaStream>(null);
     const micProducersRef=useRef<Producer>(null);
     const camProducersRef=useRef<Producer>(null);
+
+    // Track dynamically created audio elements for cleanup
+    const remoteAudioElementsRef=useRef<HTMLAudioElement[]>([]);
+
     //Player data
     const [game, setGame] = useState(new Chess());
     const [playerColor, setPlayerColor] = useState<"white" | "black" | null>(null);
@@ -92,16 +84,92 @@ export default function Room(){
         };
         socketRef.current.on('new-producer',newProducerHandler);
 
+        // Bug 1 fix: handle producer-closed — clean up dead consumers when opponent disconnects
+        const producerClosedHandler = ({ producerId }: { producerId: string }) => {
+            console.log('[producer-closed] Producer removed:', producerId);
+            // Remove from consumed list so we can re-consume later on rejoin
+            consumedProducerIdsRef.current = consumedProducerIdsRef.current.filter(id => id !== producerId);
+            // Clear remote video if it was a video producer
+            if (remoteVideoRef.current && remoteStreamRef.current) {
+                remoteVideoRef.current.srcObject = null;
+                remoteStreamRef.current = null;
+            }
+            // Remove dynamically created audio elements
+            remoteAudioElementsRef.current.forEach(el => {
+                el.srcObject = null;
+                el.remove();
+            });
+            remoteAudioElementsRef.current = [];
+        };
+        socketRef.current.on('producer-closed', producerClosedHandler);
+
+        // Bug 1 fix: handle peer-rejoined — opponent refreshed and is coming back
+        const peerRejoinedHandler = async ({ socketId, name }: { socketId: string, name: string }) => {
+            console.log(`[peer-rejoined] ${name} (${socketId}) is rejoining`);
+            // Clear stale remote video/audio — new producers will trigger new-producer events
+            if (remoteVideoRef.current) {
+                remoteVideoRef.current.srcObject = null;
+            }
+            remoteStreamRef.current = null;
+            remoteAudioElementsRef.current.forEach(el => {
+                el.srcObject = null;
+                el.remove();
+            });
+            remoteAudioElementsRef.current = [];
+            consumedProducerIdsRef.current = [];
+        };
+        socketRef.current.on('peer-rejoined', peerRejoinedHandler);
+
         const playerDisconnectedHandler = (data: { socketId: string, name: string }) => {
-            alert(`${data.name} has left the room`);
+            console.log(`[playerDisconnected] ${data.name} left the room`);
         };
         socketRef.current.on('playerDisconnected', playerDisconnectedHandler);
 
+        // Bug 5 fix: proper cleanup on unmount
         return () => {
             socketRef.current?.off('colorAssigned');
             socketRef.current?.off('gameStateSync');
             socketRef.current?.off('new-producer', newProducerHandler);
+            socketRef.current?.off('producer-closed', producerClosedHandler);
+            socketRef.current?.off('peer-rejoined', peerRejoinedHandler);
             socketRef.current?.off('playerDisconnected', playerDisconnectedHandler);
+
+            // Stop local media tracks
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach(track => track.stop());
+                localStreamRef.current = null;
+            }
+
+            // Close producers
+            if (camProducersRef.current) {
+                camProducersRef.current.close();
+                camProducersRef.current = null;
+            }
+            if (micProducersRef.current) {
+                micProducersRef.current.close();
+                micProducersRef.current = null;
+            }
+
+            // Close transports
+            if (sendTransportRef.current) {
+                sendTransportRef.current.close();
+                sendTransportRef.current = null;
+            }
+            if (recvTransportRef.current) {
+                recvTransportRef.current.close();
+                recvTransportRef.current = null;
+            }
+
+            // Clean up audio elements
+            remoteAudioElementsRef.current.forEach(el => {
+                el.srcObject = null;
+                el.remove();
+            });
+            remoteAudioElementsRef.current = [];
+
+            // Disconnect socket
+            socketRef.current?.disconnect();
+            socketRef.current = null;
         };
     },[roomName])
 
@@ -157,7 +225,7 @@ export default function Room(){
                     rtpParameters,
                     appData
                 })
-                selfProducerIds.push(producerId);
+                selfProducerIdsRef.current.push(producerId);
                 callback({id : producerId});
             }catch(e){
                 console.log('[produce-transport] ',e);
@@ -187,10 +255,14 @@ export default function Room(){
             alert('device not found');
             router.push('/join-game');
         }
-        const producer=selfProducerIds.find((id : string)=>id==producerId);
+        // Bug 5 fix: use ref instead of module-level variable
+        const producer=selfProducerIdsRef.current.find((id : string)=>id==producerId);
         if(producer) return;
+
+        // Don't re-consume a producer we already consumed
+        if(consumedProducerIdsRef.current.includes(producerId)) return;
         
-        consumedProducerIds.push(producerId);
+        consumedProducerIdsRef.current.push(producerId);
         socketRef.current?.emit('consume',{
             roomId : roomIdRef.current,
             producerId,
@@ -198,6 +270,8 @@ export default function Room(){
         }, async (res : {error?:string, id : string, producerId : string, kind : 'video' | 'audio', rtpParameters : RtpParameters})=>{
             if(res.error){
                 console.log(res.error);
+                // Remove from consumed list on error so we can retry
+                consumedProducerIdsRef.current = consumedProducerIdsRef.current.filter(id => id !== producerId);
                 return;
             }
             const consumer=await recvTransportRef.current?.consume({
@@ -228,12 +302,13 @@ export default function Room(){
                 audio.srcObject=new MediaStream([consumer.track]);
                 audio.play().catch(()=>console.debug('audio play blocked'));
                 document.body.appendChild(audio);
+                remoteAudioElementsRef.current.push(audio);
                 socketRef.current?.emit('resume-consumer',{roomId : roomIdRef.current,consumerId : consumer.id});
             }
 
             consumer?.on('transportclose',()=>{
                 remoteStreamRef.current=null;
-                consumedProducerIds=consumedProducerIds.filter((id : string)=>id!=producerId);
+                consumedProducerIdsRef.current=consumedProducerIdsRef.current.filter((id : string)=>id!=producerId);
             })
         })
 

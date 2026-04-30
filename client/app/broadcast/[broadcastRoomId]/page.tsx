@@ -4,7 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import axios from "axios";
 import React from "react";
 
-const BASE_URL = "http://localhost:8080"//"https://65.1.130.45.sslip.io"; //process.env.NEXT_PUBLIC_BACKEND_URL ||
+const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080"//"https://65.1.130.45.sslip.io"; //process.env.NEXT_PUBLIC_BACKEND_URL ||
 
 interface BroadcastInfo {
     broadcastRoomId: string;

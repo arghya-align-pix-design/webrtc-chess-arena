@@ -1,0 +1,390 @@
+Full Extended Plan — 50 Days
+
+PHASE 1 — DOCKER
+Days 1–4
+Day 1 — Concept session (evening)
+
+What Docker actually is — containers vs VMs, why it matters
+Dockerfile anatomy — base image, layers, COPY, RUN, CMD, EXPOSE
+Build your first image for the Node.js backend
+Come here: I walk you through every line until it makes sense
+
+Day 2 — Build session
+
+Dockerfile for Next.js frontend
+First docker-compose.yml — Node + Next.js talking to each other
+Expect: networking issues, port confusion, volume mounts breaking
+Come here when it breaks — we fix it together
+
+Day 3 — Add PostgreSQL to compose
+
+PostgreSQL container + persistent volume
+Environment variables with .env file
+Health checks so Node waits for Postgres to be ready
+docker compose up starts your entire chess app cold
+
+Day 4 — Polish + commit
+
+Proper .dockerignore
+Multi-stage build for Next.js (smaller image)
+README section: "Running locally with Docker"
+Push to GitHub. Phase 1 done.
+
+
+PHASE 2 — REDIS + PUB/SUB + GAME STATE
+Days 5–11
+Day 5 — Redis concept session
+
+What Redis is and why it's not just a cache
+Data structures: strings, hashes, sets, sorted sets — when to use which
+Pub/Sub model — publisher, subscriber, channels
+How this connects to your chess app specifically
+
+Day 6 — Redis basics build
+
+Add Redis container to your compose file
+Connect Node.js to Redis using ioredis
+Manually publish and subscribe to a test channel
+Verify messages flowing — come here when connection refuses
+
+Day 7 — Replace Socket.IO rooms with Redis Pub/Sub
+
+Player makes move → Node publishes to game:{gameId}:moves
+Game server subscribes → broadcasts to opponent
+This is the big architectural shift — your server becomes stateless
+Expect: message ordering issues, we'll debug together
+
+Day 8 — Redis for game state storage
+
+Store FEN string in Redis with TTL (time to live)
+On reconnect → pull FEN from Redis, not from memory
+Now your reconnection is truly distributed and survives server restart
+Test it: kill the Node process, restart, reconnect — game survives
+
+Day 9 — Redis Adapter for Socket.IO
+
+Install @socket.io/redis-adapter
+Now two Node instances can handle the same game
+Run two Node containers — prove a move from one reaches a player on the other
+This is your horizontal scaling proof of concept
+
+Day 10 — Concept: Singleton pattern
+
+Why you need it in Node.js specifically
+Database connection pools, Redis client — one instance shared everywhere
+Refactor your PostgreSQL and Redis connections to proper Singletons
+Understand: module caching in Node.js, why it works the way it does
+
+Day 11 — Polish Redis phase
+
+Clean up code, proper error handling on Redis disconnect
+Document what you built in README
+Commit cleanly. Phase 2 done.
+
+
+PHASE 3 — QUEUES (BULLMQ)
+Days 12–15
+Day 12 — Queue concept session
+
+What a job queue is and why you need one
+BullMQ vs raw Redis pub/sub — when to use which
+Use cases in your chess app: post-game analysis, move archival, notifications
+FIFO, delayed jobs, retries, dead letter queues
+
+Day 13 — BullMQ build
+
+Install BullMQ, create your first queue
+Producer: after game ends → add job to game-analysis queue
+Worker: picks up job → saves full move history to PostgreSQL
+Test: play a game, verify move history appears in DB async
+
+Day 14 — Queue patterns
+
+Retry logic on failed jobs
+Concurrency control — how many workers process simultaneously
+Job progress events — real-time progress reporting
+Bull Board UI — visual dashboard for your queues
+
+Day 15 — Polish + commit
+
+Error handling, logging on queue failures
+README: explain your async architecture
+Phase 3 done.
+
+
+PHASE 4 — AUTH (COOKIES + JWT)
+Days 16–21
+Day 16 — Auth concept session: Cookies
+
+HTTP cookies deep dive — how they work at protocol level
+httpOnly, Secure, SameSite — what each does and why it matters
+Session-based auth flow: login → server creates session → cookie sent → verified on each request
+Why this is better than localStorage for auth tokens
+
+Day 17 — Cookie auth build
+
+express-session + Redis session store
+Register/login endpoints, password hashing with bcrypt
+Session cookie set on login, cleared on logout
+Protect your chess game routes — unauthenticated users redirected
+
+Day 18 — JWT concept session
+
+What JWT is — header, payload, signature
+Stateless vs stateful auth tradeoffs — know this cold for interviews
+Access tokens + refresh tokens pattern
+Token revocation problem — why it's hard and how people solve it
+
+Day 19 — JWT build
+
+Implement JWT as alternative to session auth
+Refresh token rotation — new refresh token on every use
+Store refresh tokens in Redis with TTL
+Understand: why you now have both implementations and which to use when
+
+Day 20 — Auth edge cases
+
+CSRF protection with cookie auth
+Rate limiting login attempts (Redis-based)
+"Remember me" functionality
+Logout from all devices
+
+Day 21 — Polish + commit
+
+Clean up auth code, write unit tests for auth middleware
+README: document auth architecture decisions
+Phase 4 done.
+
+
+PHASE 5 — OPENAPI + RATE LIMITING + DDOS + CAPTCHA
+Days 22–28
+Day 22 — OpenAPI concept session
+
+What OpenAPI 3.0 spec is, why it matters
+YAML schema structure — paths, components, schemas
+How it connects to your actual Express routes
+Live docs as a professional signal to interviewers
+
+Day 23 — OpenAPI build
+
+swagger-ui-express + swagger-jsdoc
+Document all your chess API endpoints with request/response schemas
+Live docs at /api/docs
+Generates client SDK automatically — show this off
+
+Day 24 — Rate limiting concept + build
+
+Sliding window vs fixed window vs token bucket — know the differences
+Implement sliding window rate limiter using Redis sorted sets
+/api/move → 30 requests/minute per IP
+Proper 429 response with Retry-After header
+Nginx limit_req_zone configuration
+
+Day 25 — DDoS concept session
+
+Layers of DDoS protection — L3/L4 vs L7
+What Cloudflare actually does at each layer
+What you can do at application level vs infrastructure level
+Be honest about what's realistic for your setup
+
+Day 26 — DDoS + Captcha build
+
+Cloudflare free tier in front of your EC2 — configure it
+express-slow-down for progressive response delays
+Integrate hCaptcha on register/login endpoints
+Honeypot fields on forms
+
+Day 27 — Security audit day
+
+Helmet.js for HTTP security headers
+CORS configuration locked down properly
+All PostgreSQL queries use parameterized inputs — check every single one
+Environment variables audit — zero hardcoded secrets anywhere
+
+Day 28 — Polish + commit
+
+All security measures documented in README
+Phase 5 done.
+
+
+PHASE 6 — CI/CD
+Days 29–32
+Day 29 — CI/CD concept session
+
+What CI/CD actually means in practice
+GitHub Actions: triggers, jobs, steps, runners
+Your pipeline: push → test → build Docker image → deploy to EC2
+Environment secrets in GitHub — how to handle AWS credentials safely
+
+Day 30 — Write tests first
+
+Jest setup for your Node.js backend
+Unit tests: move validation logic, FEN parsing
+Integration test: make a move via API, verify Redis receives event
+You need tests before CI makes sense
+
+Day 31 — Build GitHub Actions pipeline
+
+On push to main:
+
+Run Jest tests — fail pipeline if tests fail
+Build Docker image
+Push to Docker Hub or ECR
+SSH into EC2 → pull new image → restart containers
+
+
+First time it works end to end is genuinely satisfying
+
+Day 32 — Polish CI/CD
+
+Add branch protection — can't merge to main without passing tests
+Slack/Discord notification on deploy
+README badge showing build status
+Phase 6 done.
+
+
+PHASE 7 — GRPC
+Days 33–38
+Day 33 — gRPC concept session
+
+What gRPC is and why it exists
+Protocol Buffers — why binary over JSON
+The 4 RPC types: unary, server streaming, client streaming, bidirectional
+How this compares to REST and WebSockets — know the tradeoffs cold
+
+Day 34 — Protobuf + first unary RPC
+
+Write your .proto file: MoveService
+ValidateMove(MoveRequest) returns (MoveResponse)
+Get it compiling, call it from your game server
+Understand: code generation, stub vs implementation
+
+Day 35 — Server streaming
+
+WatchGame(GameId) returns (stream GameState)
+Spectator connects → server pushes every state change as stream
+Your spectator feature — finally built properly
+Test with multiple spectator connections simultaneously
+
+Day 36 — Bidirectional streaming
+
+PlayGame(stream MoveRequest) returns (stream GameState)
+Both players stream moves, receive state back
+Handle: stream errors, disconnection, reconnection
+This is your headline gRPC feature
+
+Day 37 — gRPC in production
+
+gRPC over HTTP/2 with TLS
+Error handling — gRPC status codes vs HTTP status codes
+Deadlines and timeouts
+Add gRPC service to your Docker compose setup
+
+Day 38 — The migration story
+
+Write up: "Why I moved from Socket.IO to gRPC for spectator streaming"
+Benchmarks: latency comparison, payload size comparison
+This is the interview story. Practice telling it out loud.
+Phase 7 done.
+
+
+PHASE 8 — SCALING THEORY + CAPACITY ESTIMATION
+Days 39–43
+Day 39 — Horizontal vs vertical scaling concept
+
+When to scale up vs scale out
+Why Node.js is I/O-bound and what that means for scaling
+PM2 cluster mode — use all CPU cores
+Stateless architecture — why Redis made this possible for you
+
+Day 40 — AWS ASG concept session
+
+Launch templates, AMIs
+Target tracking policies — scale on CPU, network, custom metrics
+Scale-in vs scale-out cooldown periods
+How your stateless Node.js + Redis setup enables this
+
+Day 41 — Capacity estimation session
+
+Framework: users → requests/sec → bandwidth → storage → compute
+Calculate for your chess app:
+
+10,000 concurrent games
+Each move event ~200 bytes
+Redis memory per active game
+PostgreSQL write throughput for move history
+
+
+Practice this calculation until you can do it live in an interview
+
+Day 42 — Load testing
+
+Install k6
+Write a load test: simulate 500 concurrent game connections
+Run it, find where things break
+Fix the bottleneck — probably PostgreSQL connection pool size
+Document: "Load tested to X concurrent users, p99 latency Y ms"
+
+Day 43 — Architecture diagram + scaling writeup
+
+Draw complete architecture: Nginx → Node cluster → Redis → BullMQ workers → PostgreSQL
+Include: Docker, CI/CD pipeline, gRPC service, ASG
+"Scaling strategy" section in README
+Phase 8 done.
+
+
+PHASE 9 — POLISH + APPLY + PREP
+Days 44–50
+Day 44 — Portfolio day
+
+3-minute Loom video: Docker startup → login → game → Redis pub/sub → gRPC spectator
+This goes in your README. Interviewers watch this before your call.
+Update CV with every new skill you've added — with specifics, not just bullet points
+
+Day 45 — Application writing day 1
+
+ClaimSorted message — finalize and send
+Landeed message — finalize and send
+Aglide message — write and send
+
+Day 46 — Application writing day 2
+
+Saturn, Capitol AI, Corgi Insurance — write and send
+Top 10 priority HYD companies from your list — apply to all
+workatastartup.com profile — complete and published
+
+Day 47 — System design prep
+
+Practice out loud: "Design a real-time multiplayer game backend"
+Practice: "Design a rate limiter"
+Practice: "How would you scale your chess app to 1 million users"
+You've built every piece. Just need to articulate the decisions clearly.
+
+Day 48 — DSA day
+
+4 LeetCode mediums in TypeScript
+Focus: arrays, hashmaps, graphs
+Explain your reasoning out loud as you solve — interview muscle
+
+Day 49 — Mock interview yourself
+
+Record: "Tell me about your most complex project" — 8 minutes max
+Record: "Why are you a good fit for this role" — 3 minutes max
+Watch them back. Fix where you ramble or undersell.
+
+Day 50 — Done
+
+Final push to GitHub
+README perfect
+CV updated
+Applications out
+Close the laptop.
+
+
+Summary
+PhaseTopicDays1Docker1–42Redis + Pub/Sub + Singleton5–113BullMQ 
+Queues12–154Auth — Cookies + JWT16–215OpenAPI + Rate Limiting + DDoS
+ + Captcha22–286CI/CD + Testing29–327gRPC33–388Scaling + Capacity + 
+ Load Testing39–439Polish + Apply + Interview Prep44–50
+
+Total: 50 days.
