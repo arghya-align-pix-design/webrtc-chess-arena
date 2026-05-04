@@ -8,6 +8,7 @@ import { Consumer, Producer, Transport, Worker } from 'mediasoup/types';
 import { CreateWorker } from './mediasoup/worker';
 import { createWebRtcTransport } from './mediasoup/transport';
 import { mediaCodecs } from './mediasoup/config';
+import {Chess} from 'chess.js';
 
 const app=express();
 app.use(cors({
@@ -36,6 +37,8 @@ interface Rooms {
 }
 
 const chessRooms: Record<string, Rooms> = {};
+// Store a Chess instance per room, not just FEN
+const chessEngines: Record<string, Chess> = {};
 
 async function creatingWorker(){
     worker=await CreateWorker();
@@ -43,7 +46,13 @@ async function creatingWorker(){
 creatingWorker();
 
 function generateRoomId() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  //return Math.random().toString(36).substring(2, 8).toUpperCase();
+    let id;
+    //check to make sure, same coded room dont already exists, if exists generate new one
+  do {
+    id = Math.random().toString(36).substring(2, 8).toUpperCase();
+  } while (rooms.has(id));
+  return id;
 }
 
 app.get('/ping',(req,res)=>{
@@ -56,7 +65,7 @@ app.post('/join',(req,res)=>{
 
     if(room){
         if(room.peers.length==2){
-            res.status(403).json({error : 'Both peers already joined'});
+            return res.status(403).json({error : 'Both peers already joined'});
         }
         res.status(200).json({roomName : room.name, broadcastRoomId: room.broadcastRoomId, gameMode: room.gameMode});
     }
@@ -75,6 +84,8 @@ app.post('/create',async (req,res)=>{
         const room=new Room(roomName,id,router, gameMode);
         room.broadcastRoomId = broadcastId;
         rooms.set(id,room);
+        chessEngines[id] = new Chess();
+        console.log("New Chess engine for the room :",id," is created.")
 
         // Create broadcast room
         const broadcastRouter=await worker.createRouter({mediaCodecs});
@@ -229,16 +240,51 @@ io.on('connection',(socket)=>{
     // Chess: relay a move to the opponent in the same room
     socket.on('moveMade', ({ roomId, from, to, fen }: { roomId: string; from: string; to: string; fen: string }) => {
         console.log(`[moveMade] ${socket.id} moved ${from}->${to} in room ${roomId}`);
-        if (chessRooms[roomId]) {
-            chessRooms[roomId].fen = fen;
+        
+        const engine = chessEngines[roomId];
+        if (!engine) return;
+
+        const chessRoom = chessRooms[roomId];
+        const player = chessRoom?.players.find(p => p.id === socket.id);
+        if (!player) return;
+
+        const currentTurn = engine.turn(); // 'w' or 'b'
+        if ((currentTurn === 'w' && player.color !== 'white') ||
+            (currentTurn === 'b' && player.color !== 'black')) {
+            socket.emit('invalidMove', { reason: 'not your turn' });
+            return;
         }
-        socket.to(roomId).emit('moveMade', { from, to, fen });
+
+        // Validate the move — engine.move() returns null if illegal
+        const moveResult = engine.move({ from, to, promotion: 'q' });
+        if (!moveResult) {
+            socket.emit('invalidMove', { reason: 'illegal move' });
+            return;
+        }
+        
+        // Only NOW trust the FEN — generate it server-side
+        const validatedFen = engine.fen();
+        chessRooms[roomId].fen = validatedFen;
+
+        if (chessRooms[roomId]) {
+            chessRooms[roomId].fen = validatedFen;
+        }
+        socket.to(roomId).emit('moveMade', { from, to, fen:validatedFen });
 
         // Also broadcast to spectators
         const room = rooms.get(roomId);
         if (room && room.broadcastRoomId) {
-            io.to(room.broadcastRoomId).emit('moveMade', { from, to, fen });
+            io.to(room.broadcastRoomId).emit('moveMade', { from, to, fen:validatedFen });
         }
+
+         // Game over check
+    if (engine.isGameOver()) {
+        const result = engine.isCheckmate() ? 'checkmate'
+                    : engine.isDraw() ? 'draw'
+                    : 'stalemate';
+        io.to(roomId).emit('gameOver', { result, fen: validatedFen });
+    }
+
     })
 
     // Broadcast room handlers
@@ -717,11 +763,20 @@ io.on('connection',(socket)=>{
                             broadcastRooms.delete(room.broadcastRoomId);
                             console.log(`[disconnect] Broadcast room ${room.broadcastRoomId} cleaned up because game room closed and no spectators remain.`);
                         } else {
+                             const finalFen = chessRooms[roomId]?.fen || 
+                                "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+                            
+                            io.to(room.broadcastRoomId).emit('game-ended', {
+                                reason: 'players-disconnected',
+                                finalFen
+                            });
                             console.log(`[disconnect] Game room ${roomId} closed, broadcast room ${room.broadcastRoomId} remains open for ${broadcastRoom.getSpectatorCount()} spectator(s).`);
                         }
                     }
 
                     rooms.delete(roomId);
+                    delete chessRooms[roomId];
+                    delete chessEngines[roomId];    
                     delete chessRooms[roomId];
                     console.log(`[disconnect] Room ${roomId} completely cleaned up (empty).`);
                 } else {
