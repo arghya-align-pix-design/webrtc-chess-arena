@@ -1,0 +1,78 @@
+The Right Architecture — Guest First, Upgrade Later
+Phase 1 — Guest (localStorage UUID)
+    └── UUID generated instantly, no friction
+    └── can play immediately
+    └── matches stored in DB under this UUID
+    └── works perfectly for testing (2 tabs = 2 UUIDs)
+
+Phase 2 — Claim your history (optional, not forced)
+    └── after game ends, soft prompt appears
+        "Want to save your match history? Add a username."
+    └── player picks a simple username + password
+        OR just a username + PIN (simpler)
+    └── server merges UUID history → real account
+    └── UUID in localStorage replaced with session token
+
+Phase 3 — Real auth (when app grows)
+    └── add Google / email login
+    └── same merge flow
+
+How Match Mapping Works In DB
+users
+    id              → starts as localStorage UUID
+                      becomes real user id after account creation
+    name            → "xyz", "player123" whatever they typed
+    is_guest        → true until they create account
+    username        → null until they claim account
+    pin_hash        → null until they claim account
+    created_at
+    last_seen_at
+
+
+user_matches        → bridge table, nothing changes here
+    user_id         → same UUID, always consistent
+    match_id
+    color
+    points_scored
+Guest plays 10 matches under UUID abc-123
+    └── all stored under user_id: abc-123
+
+Guest creates username "DeepBlue" with PIN
+    └── server marks is_guest = false
+    └── username = "DeepBlue"
+    └── id stays abc-123, nothing else changes
+    └── all 10 matches still there, now tied to "DeepBlue"
+
+DeepBlue opens app on phone
+    └── enters username + PIN
+    └── server returns their UUID: abc-123
+    └── localStorage on phone gets abc-123
+    └── full history available
+
+For Your Testing Right Now
+
+Tab 1 opens → UUID: aaa-111 generated → stored in localStorage
+Tab 2 opens → UUID: bbb-222 generated → stored in localStorage
+
+Tab 1 joins room as Player A with id aaa-111
+Tab 2 joins room as Player B with id bbb-222
+
+Server sees two completely different identities
+Works perfectly for local testing
+Works perfectly in production
+
+What To Build In What Order
+Now (this week with Redis + Postgres)
+    └── localStorage UUID as player identity
+    └── user record created on first join
+    └── matches mapped via user_matches bridge table
+    └── is_guest = true for everyone
+
+Later (when app is more stable)
+    └── username + PIN claim flow
+    └── merge guest history into claimed account
+    └── cross device login
+
+Much later
+    └── Google auth or email
+    └── same merge flow, different login method

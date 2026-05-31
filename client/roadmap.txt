@@ -36,7 +36,8 @@ Days 5–11
 Day 5 — Redis concept session
 
 What Redis is and why it's not just a cache
-Data structures: strings, hashes, sets, sorted sets — when to use which
+Data structures: strings, hashes, sets, sorted sets —
+when to use which
 Pub/Sub model — publisher, subscriber, channels
 How this connects to your chess app specifically
 

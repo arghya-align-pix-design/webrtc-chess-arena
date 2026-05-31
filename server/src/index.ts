@@ -1,4 +1,9 @@
 import { Server } from 'socket.io';
+import redis from './db/redis';
+import { db } from './db/postgres';
+import { users, matches, userMatches, matchMoves } from './db/schema';
+import { eq, and } from 'drizzle-orm';
+import { startCleanupJob } from './db/cleanup';
 import express from 'express';
 import cors from 'cors';
 import { Peer, PeerRole } from './classes/peer';
@@ -9,6 +14,7 @@ import { CreateWorker } from './mediasoup/worker';
 import { createWebRtcTransport } from './mediasoup/transport';
 import { mediaCodecs } from './mediasoup/config';
 import {Chess} from 'chess.js';
+import 'dotenv/config';
 
 const app=express();
 app.use(cors({
@@ -25,6 +31,19 @@ const broadcastRooms : Map<string,BroadcastRoom>=new Map();
 // Track which room each socket is currently in (prevents multi-room join — Bug 5)
 const socketToRoom : Map<string,string>=new Map();
 
+// Persistent player identity — survives reconnection
+const playerIdToSocket: Map<string, string> = new Map();
+const socketToPlayerId: Map<string, string> = new Map();
+
+// roomId -> Postgres matchId — needed to write moves during active game
+const matchIdByRoom: Map<string, string> = new Map();
+
+// Pause requests — roomId -> socketId of who requested
+const pauseRequests: Map<string, string> = new Map();
+
+//Experimental stuff above here, to track player colors and game
+//  state on the server for
+//  better rejoin handling and spectator sync
 // Custom types
 interface Player {
   id: string;
@@ -44,6 +63,7 @@ async function creatingWorker(){
     worker=await CreateWorker();
 }
 creatingWorker();
+startCleanupJob(); // ← add this line
 
 function generateRoomId() {
   //return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -141,8 +161,8 @@ app.get('/broadcast/:broadcastRoomId', (req,res)=>{
     }
 })
 
-const server=app.listen(8080,()=>{
-    console.log('Server is listening on port 8080');
+const server=app.listen(8090,()=>{
+    console.log('Server is listening on port 8090');
 })
 
 /*----------------------------------------------------------------------- */

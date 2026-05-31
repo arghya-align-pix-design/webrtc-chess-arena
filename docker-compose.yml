@@ -1,6 +1,38 @@
 version: '3.9'
 
 services:
+  postgres:
+    image: postgres:16
+    container_name: chessvid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: chessvid
+    ports:
+      - "5433:5432"
+    volumes:
+      - chessvid_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: chessvid-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - chessvid_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   server:
     build:
       context: ./server
@@ -17,8 +49,15 @@ services:
       - NODE_ENV=production
       - PORT=8080
       - ANNOUNCED_IP=${ANNOUNCED_IP}
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5433/chessvid
+      - REDIS_URL=redis://redis:6380
     volumes:
       - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -31,4 +70,8 @@ services:
     depends_on:
       - server
     environment:
-      - NEXT_PUBLIC_BACKEND_URL=http://server:8080
+      - NEXT_PUBLIC_BACKEND_URL=http://server:8090
+
+volumes:
+  chessvid_pgdata:
+  chessvid_redisdata:
